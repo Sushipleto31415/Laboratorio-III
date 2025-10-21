@@ -25,9 +25,9 @@ r_s = 0.01          # radio de Schwarzschild (puede variarse como parámetro)
 # Límites de la grilla de condiciones iniciales:
 x_min, x_max = -2.0, 2.0
 y_min, y_max = -2.0, 2.0
-N = 512           # tamaño de la grilla (e.g. 512x512) según indicación
+N = 64          # tamaño de la grilla (e.g. 512x512) según indicación
 # Tiempo de integración:
-t_max = 10000.0   # tiempo máximo (unidades adimensionales):contentReference[oaicite:9]{index=9}
+t_max = 500.0   # tiempo máximo (unidades adimensionales):contentReference[oaicite:9]{index=9}
 dt = 0.01         # paso temporal (elegir pequeño para precisión)
 
 def grad_Omega(x, y, r_s):
@@ -190,6 +190,8 @@ for i in range(N):
 
 # ---- Generar gráficos ----
 
+
+"""
 # Mapa de clasificación (colores según tipo de órbita):
 colores = np.array([
     [0.0, 1.0, 0.0],    # verde (regular)
@@ -238,4 +240,62 @@ cbar2 = plt.colorbar(m, shrink=0.8, orientation='vertical')
 cbar2.set_label('t_colision')
 plt.tight_layout()
 plt.savefig('mapa_tiempos.png', dpi=300)
+"""
+#------ New ------
 
+# Mapa de clasificación (colores según tipo de órbita):
+colores = np.array([
+    [0.0, 1.0, 0.0],    # verde (regular)
+    [1.0, 0.0, 1.0],    # magenta (pegajosa)
+    [1.0, 1.0, 0.0],    # amarillo (caótica)
+    [0.0, 0.0, 1.0],    # azul (colisión 1)
+    [1.0, 0.0, 0.0],    # rojo (colisión 2)
+    [0.0, 1.0, 1.0]     # cyan (escape)
+])
+cmap = plt.matplotlib.colors.ListedColormap(colores)
+
+fig1, ax1 = plt.subplots(figsize=(6,6))
+im1 = ax1.imshow(orbit_type, origin='lower', extent=[x_min,x_max,y_min,y_max], cmap=cmap)
+ax1.set_xlabel('x')
+ax1.set_ylabel('y')
+ax1.set_title('Mapa de clasificación de órbitas')
+import matplotlib.patches as mpatches
+leyenda = [
+    mpatches.Patch(color=colores[0], label='Regular'),
+    mpatches.Patch(color=colores[1], label='Pegajosa'),
+    mpatches.Patch(color=colores[2], label='Caótica'),
+    mpatches.Patch(color=colores[3], label='Colisión 1'),
+    mpatches.Patch(color=colores[4], label='Colisión 2'),
+    mpatches.Patch(color=colores[5], label='Escape')
+]
+ax1.legend(handles=leyenda, loc='upper right', fontsize='small')
+fig1.tight_layout()
+fig1.savefig('mapa_orbitas.png', dpi=300)
+
+# Mapa de tiempos (escape vs colisión):
+fig2, ax2 = plt.subplots(figsize=(6,6))
+esc_map = np.where(orbit_type==5, times, np.nan)
+col_map = np.where((orbit_type==3)|(orbit_type==4), times, np.nan)
+
+im_esc = ax2.imshow(esc_map, origin='lower', extent=[x_min,x_max,y_min,y_max], 
+                    cmap='viridis', vmax=np.nanmax(esc_map))
+im_col = ax2.imshow(col_map, origin='lower', extent=[x_min,x_max,y_min,y_max],
+                    cmap='autumn', alpha=0.6, vmax=np.nanmax(col_map))
+ax2.set_xlabel('x')
+ax2.set_ylabel('y')
+ax2.set_title('Tiempos de escape (verde) y colisión (rojo)')
+
+# Barras de color correctamente asociadas al mismo ax:
+cbar1 = fig2.colorbar(im_esc, ax=ax2, shrink=0.8)
+cbar1.set_label('t_escape')
+
+cbar2 = fig2.colorbar(im_col, ax=ax2, shrink=0.8)
+cbar2.set_label('t_colision')
+
+fig2.tight_layout()
+fig2.savefig('mapa_tiempos.png', dpi=300)
+
+
+
+
+plt.show()
