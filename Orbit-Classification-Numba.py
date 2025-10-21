@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from math import sqrt, sin, cos
+from numba import njit
 
 # --- Parámetros físicos y numéricos (modificables) ---
 mu = 0.5                    # masa relativa de los agujeros (igual masa implica mu=0.5)
@@ -16,20 +16,20 @@ dt = 0.01                   # paso temporal (simétrico simplecítico)
 
 # Potencial efectivo (Ω) y su gradiente (Paczynski-Wiita + centrífugo)
 def U(x, y):
-    R1 = sqrt((x - x1)**2 + (y - y1)**2)
-    R2 = sqrt((x - x2)**2 + (y - y2)**2)
+    R1 = np.sqrt((x - x1)**2 + (y - y1)**2)
+    R2 = np.sqrt((x - x2)**2 + (y - y2)**2)
     return 0.5/(R1 - r_s) + 0.5/(R2 - r_s) + 0.5*(x**2 + y**2)
 
 def grad_U(x, y):
-    R1 = sqrt((x - x1)**2 + (y - y1)**2)
-    R2 = sqrt((x - x2)**2 + (y - y2)**2)
+    R1 = np.sqrt((x - x1)**2 + (y - y1)**2)
+    R2 = np.sqrt((x - x2)**2 + (y - y2)**2)
     dU_dx = x - 0.5*(x - x1)/(R1*(R1 - r_s)**2) - 0.5*(x - x2)/(R2*(R2 - r_s)**2)
     dU_dy = y - 0.5*(y - y1)/(R1*(R1 - r_s)**2) - 0.5*(y - y2)/(R2*(R2 - r_s)**2)
     return dU_dx, dU_dy
 
 # Rotación de velocidades para integrador simplecítico
 def rotate(vx, vy, angle):
-    ca, sa = cos(angle), sin(angle)
+    ca, sa = np.cos(angle), np.sin(angle)
     return vx*ca + vy*sa, -vx*sa + vy*ca
 
 # Configurar grilla de condiciones iniciales
@@ -47,7 +47,7 @@ for i in range(N):
     for j in range(N):
         x, y = X0[i,j], Y0[i,j]
         # Velocidades iniciales retrógradas (φ̇ < 0) según g = sqrt(2U-C)
-        r0 = sqrt(x*x + y*y)
+        r0 = np.sqrt(x*x + y*y)
         if r0 == 0.0:
             vx = vy = 0.0
         else:
@@ -56,7 +56,7 @@ for i in range(N):
                 # Región prohibida (energía insuficiente)
                 orbit_type[i,j] = -1
                 continue
-            g = sqrt(val)
+            g = np.sqrt(val)
             vx =  (y/r0)*g
             vy = -(x/r0)*g
         
@@ -115,19 +115,19 @@ for i in range(N):
             t += dt
             
             # Chequear escape
-            R = sqrt(x*x + y*y)
+            R = np.sqrt(x*x + y*y)
             if R >= 10.0 and (vx*x + vy*y) > 0:
                 escaped = True
                 times[i,j] = t
                 orbit_type[i,j] = 5  # escape
                 break
             # Chequear colisiones con primarios
-            if sqrt((x-x1)**2 + (y-y1)**2) <= r_s:
+            if np.sqrt((x-x1)**2 + (y-y1)**2) <= r_s:
                 collided = True
                 times[i,j] = t
                 orbit_type[i,j] = 3  # colisión con BH1
                 break
-            if sqrt((x-x2)**2 + (y-y2)**2) <= r_s:
+            if np.sqrt((x-x2)**2 + (y-y2)**2) <= r_s:
                 collided = True
                 times[i,j] = t
                 orbit_type[i,j] = 4  # colisión con BH2
