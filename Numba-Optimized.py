@@ -8,25 +8,25 @@ mu = 0.5                    # masa relativa de los agujeros (igual masa implica 
 x1, y1 = -0.5, 0.0          # posición de BH1
 x2, y2 =  0.5, 0.0          # posición de BH2
 r_s = 10e-2                  # radio de Schwarzschild (p.ej., 0.01)
-C = 4.0                     # constante de Jacobi (energia)
+C = 1.45                     # constante de Jacobi (energia)
 x_min, x_max = -2.5, 2.5    # rango en x
 y_min, y_max = -2.5, 2.5    # rango en y
 N = 512                     # resolución de la grilla
 
 #Ajustamos el tiempo máximo dependiento de la integral de Jacobi C
 if C >= 3.0:
-    t_max = 300.0
+    t_max = 2000.0
 elif C <= 3.0:
-    t_max = 3000.0
-else:
     t_max = 5000.0
+else:
+    t_max = 10000.0
 
-dt = 0.005                   # paso temporal (simétrico simplecítico)
+dt = 0.01                   # paso temporal (simétrico simplecítico)
 
 # RADIOS CRÍTICOS COMO EN EL PAPER
 escape_radius = 10.0         # Radio de escape
-collision_radius = 1e-5      # Para caso Newtoniano (r_s = 0) 
-close_encounter_additional_radius = 5e-4  # Radio adicional para close encounter
+collision_radius = 1e-5      # Para caso Newtoniano (r_s = 0)
+close_encounter_additional_radius = 1e-5  # Radio adicional para close encounter
 
 # Funciones compiladas con Numba
 @njit
@@ -72,149 +72,98 @@ def normalize_4d(vec):
 def dot_4d(v1, v2):
     return v1[0]*v2[0] + v1[1]*v2[1] + v1[2]*v2[2] + v1[3]*v2[3]
 
-# Función principal que integra una órbita
 @njit
 def integrate_single_orbit(x, y, x1, y1, x2, y2, r_s, C, t_max, dt):
-    # Velocidades iniciales retrógradas
+    # Initial velocity setup
     r0 = math.sqrt(x*x + y*y)
     if r0 == 0.0:
         vx = vy = 0.0
     else:
         val = 2 * U(x, y, x1, y1, x2, y2, r_s) - C
         if val < 0:
-            return -1, 0.0  # Región prohibida
+            return -1, 0.0
         g = math.sqrt(val)
         vx = (y/r0) * g
         vy = -(x/r0) * g
-    
-    # Vectores iniciales para SALI
+
+    # SALI setup
     w1 = np.array([1.0, 0.0, 0.0, 0.0])
     w2 = np.array([0.0, 1.0, 0.0, 0.0])
-    w1 = w1 / norm_4d(w1)
-    # Ortogonalización de Gram-Schmidt
-    dot_val = dot_4d(w2, w1)
-    w2 = w2 - dot_val * w1
-    w2 = w2 / norm_4d(w2)
-    
+    w1 /= norm_4d(w1)
+    w2 -= dot_4d(w2, w1) * w1
+    w2 /= norm_4d(w2)
+
+    collision_threshold = r_s + close_encounter_additional_radius
     t = 0.0
-    escaped = False
-    collided = False
+    half_dt = 0.5 * dt
+    sali_eval_step = 50
+    eps = 1e-5
+    last_sali = 1.0
 
-    # Determinar radio de colisión/close encounter según paper
-    if r_s == 0.0:
-        collision_threshold = collision_radius  # Newtonian collision
-    else:
-        collision_threshold = r_s + close_encounter_additional_radius  # Pseudo-Newtonian close encounter
+    steps = int(t_max / dt)
+    for step in range(steps):
+        # Leapfrog symplectic integration
+        ca, sa = math.cos(dt), math.sin(dt)
+        vx_r, vy_r = vx*ca + vy*sa, -vx*sa + vy*ca
+        dux, duy = grad_U(x, y, x1, y1, x2, y2, r_s)
+        vx_r += dux * half_dt
+        vy_r += duy * half_dt
+        x += vx_r * dt
+        y += vy_r * dt
+        dux, duy = grad_U(x, y, x1, y1, x2, y2, r_s)
+        vx_r += dux * half_dt
+        vy_r += duy * half_dt
+        vx, vy = vx_r*ca + vy_r*sa, -vx_r*sa + vy_r*ca
 
-    # Integrar hasta t_max o hasta escape/colisión
-    while t < t_max and not escaped and not collided:
-        # Guardar posición anterior para verificar cruce de límites
-        x_prev, y_prev = x, y
-        
-        # Integrador simplecítico (rotación + kicks)
-        vx, vy = rotate(vx, vy, dt)
-        dU_dx, dU_dy = grad_U(x, y, x1, y1, x2, y2, r_s)
-        vx += dU_dx * (dt/2)
-        vy += dU_dy * (dt/2)
-        x += vx * dt
-        y += vy * dt
-        dU_dx, dU_dy = grad_U(x, y, x1, y1, x2, y2, r_s)
-        vx += dU_dx * (dt/2)
-        vy += dU_dy * (dt/2)
-        vx, vy = rotate(vx, vy, dt)
-        
-        # Ecuaciones variacionales para SALI
-        eps = 1e-8
-        dU_dx, dU_dy = grad_U(x, y, x1, y1, x2, y2, r_s)
-        
-        # Derivadas segundas
-        d2U_xx = (grad_U(x+eps, y, x1, y1, x2, y2, r_s)[0] - grad_U(x-eps, y, x1, y1, x2, y2, r_s)[0]) / (2*eps)
-        d2U_yy = (grad_U(x, y+eps, x1, y1, x2, y2, r_s)[1] - grad_U(x, y-eps, x1, y1, x2, y2, r_s)[1]) / (2*eps)
-        d2U_xy = (grad_U(x, y+eps, x1, y1, x2, y2, r_s)[0] - grad_U(x, y-eps, x1, y1, x2, y2, r_s)[0]) / (2*eps)
-        
-        dx1, dy1, dvx1, dvy1 = w1
-        dx2, dy2, dvx2, dvy2 = w2
-        
-        # Variational equations (fixed signs)
-        dvx1, dvy1 = rotate(dvx1, dvy1, dt)
-        dvx2, dvy2 = rotate(dvx2, dvy2, dt)
-        
-        dvx1 += (2*dvy1 - d2U_xx*dx1 - d2U_xy*dy1) * (dt/2)
-        dvy1 += (-2*dvx1 - d2U_xy*dx1 - d2U_yy*dy1) * (dt/2)
-        dvx2 += (2*dvy2 - d2U_xx*dx2 - d2U_xy*dy2) * (dt/2)
-        dvy2 += (-2*dvx2 - d2U_xy*dx2 - d2U_yy*dy2) * (dt/2)
-        
-        dx1 += dvx1 * dt
-        dy1 += dvy1 * dt
-        dx2 += dvx2 * dt
-        dy2 += dvy2 * dt
-        
-        dvx1, dvy1 = rotate(dvx1, dvy1, dt)
-        dvx2, dvy2 = rotate(dvx2, dvy2, dt)
-        
-        w1 = np.array([dx1, dy1, dvx1, dvy1])
-        w2 = np.array([dx2, dy2, dvx2, dvy2])
-        
-        # Renormalización
-        w1 = w1 / norm_4d(w1)
-        dot_val = dot_4d(w2, w1)
-        w2 = w2 - dot_val * w1
-        w2 = w2 / norm_4d(w2)
-        
-        # CONDICIONES DE TERMINACIÓN (CORREGIDAS)
-
-        # Radio actual y anterior
+        # Escape detection
         R = math.sqrt(x*x + y*y)
-        R_prev = math.sqrt(x_prev*x_prev + y_prev*y_prev)
-        
-        # Chequear escape: más estricto como en el paper
-        # Debe cruzar el límite de R=10 desde adentro hacia afuera
-        if R_prev < escape_radius and R >= escape_radius:
-            # Velocidad radial positiva (hacia afuera)
+        if R >= escape_radius:
             vr = (vx*x + vy*y) / max(R, 1e-12)
             if vr > 0:
-                escaped = True
-                orbit_type = 5  # escape
-                break
-        
-        # Chequear colisión/close encounter
-        R1_current = math.sqrt((x-x1)**2 + (y-y1)**2)
-        R2_current = math.sqrt((x-x2)**2 + (y-y2)**2)
-        
-        # Verificar si está entrando a la región prohibida
-        if R1_current <= collision_threshold:
-            # Solo contar si se está acercando (no alejando)
-            R1_prev = math.sqrt((x_prev-x1)**2 + (y_prev-y1)**2)
-            if R1_current < R1_prev:
-                collided = True
-                orbit_type = 3  # BH1
-                break
-        
-        if R2_current <= collision_threshold:
-            R2_prev = math.sqrt((x_prev-x2)**2 + (y_prev-y2)**2)
-            if R2_current < R2_prev:
-                collided = True
-                orbit_type = 4  # BH2
-                break
-        
+                return 5, t  # escape
+
+        # Collision detection
+        R1 = math.sqrt((x-x1)**2 + (y-y1)**2)
+        R2 = math.sqrt((x-x2)**2 + (y-y2)**2)
+        if R1 <= collision_threshold:
+            return 3, t
+        if R2 <= collision_threshold:
+            return 4, t
+
+        # --- SALI evaluation every 50 steps ---
+        if step % sali_eval_step == 0:
+            d2U_xx = (grad_U(x+eps, y, x1, y1, x2, y2, r_s)[0] - grad_U(x-eps, y, x1, y1, x2, y2, r_s)[0]) / (2*eps)
+            d2U_yy = (grad_U(x, y+eps, x1, y1, x2, y2, r_s)[1] - grad_U(x, y-eps, x1, y1, x2, y2, r_s)[1]) / (2*eps)
+            d2U_xy = (grad_U(x, y+eps, x1, y1, x2, y2, r_s)[0] - grad_U(x, y-eps, x1, y1, x2, y2, r_s)[0]) / (2*eps)
+            
+            dx1, dy1, dvx1, dvy1 = w1
+            dx2, dy2, dvx2, dvy2 = w2
+            dvx1 += (-d2U_xx*dx1 - d2U_xy*dy1) * dt
+            dvy1 += (-d2U_xy*dx1 - d2U_yy*dy1) * dt
+            dvx2 += (-d2U_xx*dx2 - d2U_xy*dy2) * dt
+            dvy2 += (-d2U_xy*dx2 - d2U_yy*dy2) * dt
+
+            dx1 += dvx1 * dt; dy1 += dvy1 * dt
+            dx2 += dvx2 * dt; dy2 += dvy2 * dt
+            w1 = np.array([dx1, dy1, dvx1, dvy1])
+            w2 = np.array([dx2, dy2, dvx2, dvy2])
+            w1 /= norm_4d(w1)
+            w2 -= dot_4d(w2, w1) * w1
+            w2 /= norm_4d(w2)
+            
+            v1 = w1 / norm_4d(w1)
+            v2 = w2 / norm_4d(w2)
+            sali = min(norm_4d(v1 + v2), norm_4d(v1 - v2))
+            if sali < 1e-12 and last_sali < 1e-12:
+                return 2, t  # chaotic
+            if sali > 1e-3 and last_sali > 1e-3:
+                return 0, t  # regular
+            last_sali = sali
+
         t += dt
 
-    # Clasificar órbita ligada con SALI
-    if not escaped and not collided:
-        v1 = w1 / norm_4d(w1)
-        v2 = w2 / norm_4d(w2)
-        sali1 = norm_4d(v1 + v2)
-        sali2 = norm_4d(v1 - v2)
-        sali = min(sali1, sali2)
-        if sali > 1e-4:
-            orbit_type = 0  # regular
-        elif sali < 1e-8:
-            orbit_type = 2  # caótica
-        else:
-            orbit_type = 1  # pegajosa
-        t = 0.0
-    
-    return orbit_type, t
+    # Stuck → sticky orbit
+    return 1, t
 
 # Función principal que procesa toda la grilla (paralelizable)
 @njit(parallel=True)
