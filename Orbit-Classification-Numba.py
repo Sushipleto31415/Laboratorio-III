@@ -8,26 +8,42 @@ mu = 0.5                    # masa relativa de los agujeros (igual masa implica 
 x1, y1 = -0.5, 0.0          # posición de BH1
 x2, y2 =  0.5, 0.0          # posición de BH2
 r_s = 0.01                  # radio de Schwarzschild (p.ej., 0.01)
-C = 1.45                     # constante de Jacobi (energia)
+C = 3.6                     # constante de Jacobi (energia)
 x_min, x_max = -2.0, 2.0    # rango en x
 y_min, y_max = -2.0, 2.0    # rango en y
-N = 256                     # resolución de la grilla
-t_max = 500.0               # tiempo máximo de integración
+N = 128                     # resolución de la grilla
+t_max = 10000.0             # tiempo máximo de integración
 dt = 0.01                   # paso temporal (simétrico simplecítico)
+
+# RADIOS CRÍTICOS COMO EN EL PAPER
+escape_radius = 10.0         # Radio de escape
+collision_radius = 1e-5      # Para caso Newtoniano (r_s = 0)
+close_encounter_additional_radius = 1e-5  # Radio adicional para close encounter
 
 # Funciones compiladas con Numba
 @njit
 def U(x, y, x1, y1, x2, y2, r_s):
     R1 = math.sqrt((x - x1)**2 + (y - y1)**2)
     R2 = math.sqrt((x - x2)**2 + (y - y2)**2)
-    return 0.5/(R1 - r_s) + 0.5/(R2 - r_s) + 0.5*(x**2 + y**2)
+    
+    # Evitar singularidades numéricas
+    term1 = 0.5 / max(R1 - r_s, 1e-12)
+    term2 = 0.5 / max(R2 - r_s, 1e-12)
+    
+    return term1 + term2 + 0.5 * (x**2 + y**2)
 
 @njit
 def grad_U(x, y, x1, y1, x2, y2, r_s):
     R1 = math.sqrt((x - x1)**2 + (y - y1)**2)
     R2 = math.sqrt((x - x2)**2 + (y - y2)**2)
-    dU_dx = x - 0.5*(x - x1)/(R1*(R1 - r_s)**2) - 0.5*(x - x2)/(R2*(R2 - r_s)**2)
-    dU_dy = y - 0.5*(y - y1)/(R1*(R1 - r_s)**2) - 0.5*(y - y2)/(R2*(R2 - r_s)**2)
+    
+    # Términos con protección numérica
+    denom1 = R1 * max((R1 - r_s), 1e-12)**2
+    denom2 = R2 * max((R2 - r_s), 1e-12)**2
+    
+    dU_dx = x - 0.5 * (x - x1) / max(denom1, 1e-12) - 0.5 * (x - x2) / max(denom2, 1e-12)
+    dU_dy = y - 0.5 * (y - y1) / max(denom1, 1e-12) - 0.5 * (y - y2) / max(denom2, 1e-12)
+    
     return dU_dx, dU_dy
 
 @njit
@@ -75,9 +91,18 @@ def integrate_single_orbit(x, y, x1, y1, x2, y2, r_s, C, t_max, dt):
     t = 0.0
     escaped = False
     collided = False
-    
+
+    # Determinar radio de colisión/close encounter según paper
+    if r_s == 0.0:
+        collision_threshold = collision_radius  # Newtonian collision
+    else:
+        collision_threshold = r_s + close_encounter_additional_radius  # Pseudo-Newtonian close encounter
+
     # Integrar hasta t_max o hasta escape/colisión
     while t < t_max and not escaped and not collided:
+        # Guardar posición anterior para verificar cruce de límites
+        x_prev, y_prev = x, y
+        
         # Integrador simplecítico (rotación + kicks)
         vx, vy = rotate(vx, vy, dt)
         dU_dx, dU_dy = grad_U(x, y, x1, y1, x2, y2, r_s)
@@ -128,25 +153,44 @@ def integrate_single_orbit(x, y, x1, y1, x2, y2, r_s, C, t_max, dt):
         w2 = w2 - dot_val * w1
         w2 = w2 / norm_4d(w2)
         
-        t += dt
-        
-        # Chequear escape
+        # CONDICIONES DE TERMINACIÓN (CORREGIDAS)
+
+        # Radio actual y anterior
         R = math.sqrt(x*x + y*y)
-        if R >= 10.0 and (vx*x + vy*y) > 0:
-            escaped = True
-            orbit_type = 5  # escape
-            break
+        R_prev = math.sqrt(x_prev*x_prev + y_prev*y_prev)
         
-        # Chequear colisiones
-        if math.sqrt((x-x1)**2 + (y-y1)**2) <= r_s:
-            collided = True
-            orbit_type = 3  # colisión con BH1
-            break
-        if math.sqrt((x-x2)**2 + (y-y2)**2) <= r_s:
-            collided = True
-            orbit_type = 4  # colisión con BH2
-            break
-    
+        # Chequear escape: más estricto como en el paper
+        # Debe cruzar el límite de R=10 desde adentro hacia afuera
+        if R_prev < escape_radius and R >= escape_radius:
+            # Velocidad radial positiva (hacia afuera)
+            vr = (vx*x + vy*y) / max(R, 1e-12)
+            if vr > 0:
+                escaped = True
+                orbit_type = 5  # escape
+                break
+        
+        # Chequear colisión/close encounter
+        R1_current = math.sqrt((x-x1)**2 + (y-y1)**2)
+        R2_current = math.sqrt((x-x2)**2 + (y-y2)**2)
+        
+        # Verificar si está entrando a la región prohibida
+        if R1_current <= collision_threshold:
+            # Solo contar si se está acercando (no alejando)
+            R1_prev = math.sqrt((x_prev-x1)**2 + (y_prev-y1)**2)
+            if R1_current < R1_prev:
+                collided = True
+                orbit_type = 3  # BH1
+                break
+        
+        if R2_current <= collision_threshold:
+            R2_prev = math.sqrt((x_prev-x2)**2 + (y_prev-y2)**2)
+            if R2_current < R2_prev:
+                collided = True
+                orbit_type = 4  # BH2
+                break
+        
+        t += dt
+
     # Clasificar órbita ligada con SALI
     if not escaped and not collided:
         v1 = w1 / norm_4d(w1)
@@ -203,7 +247,7 @@ im1 = ax1.imshow(orbit_type, origin='lower',
                  cmap=cmap, vmin=0, vmax=5)
 ax1.plot([x1,x2],[y1,y2],'ko', markersize=6)
 ax1.set_xlabel('x'); ax1.set_ylabel('y')
-ax1.set_title(f'Clasificación de órbitas (C={C}, N={N})')
+ax1.set_title(f'Clasificación de órbitas (C={C}, N={N}, $r_s$={r_s})')
 # Leyenda de categorías
 import matplotlib.patches as mpatch
 etiquetas = ['Regular','Pegajosa','Caótica','Colisión 1','Colisión 2','Escape']
@@ -222,7 +266,7 @@ im_col = ax2.imshow(col_map, origin='lower',
                     extent=[x_min,x_max,y_min,y_max],
                     cmap='autumn', alpha=0.7, vmax=np.nanmax(col_map))
 ax2.set_xlabel('x'); ax2.set_ylabel('y')
-ax2.set_title('Tiempos de escape (azul-verde) y colisión (naranja)')
+ax2.set_title(f'Tiempos de escape (azul-verde) y colisión (naranja) (C={C}, N={N}, $r_s$={r_s})')
 cbar1 = fig2.colorbar(im_esc, ax=ax2, shrink=0.8); cbar1.set_label('Tiempo escape')
 cbar2 = fig2.colorbar(im_col, ax=ax2, shrink=0.8); cbar2.set_label('Tiempo colisión')
 fig2.tight_layout(); fig2.savefig('mapa_tiempos_numba.png', dpi=300)

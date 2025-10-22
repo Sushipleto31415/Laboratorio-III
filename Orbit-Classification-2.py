@@ -14,6 +14,7 @@ N = 256                      # resolución de la grilla reducida para prueba (or
 t_max = 500.0                # tiempo máximo de integración reducido para prueba (original: 500.0)
 dt = 0.01                   # paso temporal (simétrico simplecítico)
 
+
 # Potencial efectivo (Ω) y su gradiente (Paczynski-Wiita + centrífugo)
 def U(x, y):
     R1 = sqrt((x - x1)**2 + (y - y1)**2)
