@@ -7,11 +7,11 @@ import math
 mu = 0.5                    # masa relativa de los agujeros (igual masa implica mu=0.5)
 x1, y1 = -0.5, 0.0          # posición de BH1
 x2, y2 =  0.5, 0.0          # posición de BH2
-r_s = 0.01                  # radio de Schwarzschild (p.ej., 0.01)
+r_s = 10e-2                  # radio de Schwarzschild (p.ej., 0.01)
 C = 3.6                     # constante de Jacobi (energia)
-x_min, x_max = -2.0, 2.0    # rango en x
-y_min, y_max = -2.0, 2.0    # rango en y
-N = 128                     # resolución de la grilla
+x_min, x_max = -2.5, 2.5    # rango en x
+y_min, y_max = -2.5, 2.5    # rango en y
+N = 512                     # resolución de la grilla
 t_max = 10000.0             # tiempo máximo de integración
 dt = 0.01                   # paso temporal (simétrico simplecítico)
 
